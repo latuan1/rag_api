@@ -276,6 +276,7 @@ def test_extract_text_from_file(tmp_path, auth_headers):
 
     # Check response content
     assert json_data["text"] == file_content
+    assert "[Context:" not in json_data["text"]
     assert json_data["file_id"] == "test_text_123"
     assert json_data["filename"] == "test_text_extraction.txt"
     assert json_data["known_type"] is True  # text files are known types

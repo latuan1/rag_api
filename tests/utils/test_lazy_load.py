@@ -227,6 +227,34 @@ def _make_large_csv(path, num_rows=500):
             f.write(f'{i},item_{i},"{"D" * 150} row {i}"\n')
 
 
+def _assert_conditional_structure_metadata(docs):
+    """Validate structure metadata only when a loader emits reliable fields."""
+    for doc in docs:
+        assert isinstance(doc.metadata, dict)
+
+        if "page" in doc.metadata:
+            assert isinstance(doc.metadata["page"], int)
+
+        if "heading_path" in doc.metadata:
+            heading_path = doc.metadata["heading_path"]
+            assert isinstance(heading_path, list)
+            assert all(isinstance(item, str) and item for item in heading_path)
+
+        if "sheet_name" in doc.metadata:
+            assert isinstance(doc.metadata["sheet_name"], str)
+            assert doc.metadata["sheet_name"]
+
+        if "row_start" in doc.metadata or "row_end" in doc.metadata:
+            assert isinstance(doc.metadata.get("row_start"), int)
+            assert isinstance(doc.metadata.get("row_end"), int)
+            assert doc.metadata["row_end"] >= doc.metadata["row_start"]
+
+        if "slide_start" in doc.metadata or "slide_end" in doc.metadata:
+            assert isinstance(doc.metadata.get("slide_start"), int)
+            assert isinstance(doc.metadata.get("slide_end"), int)
+            assert doc.metadata["slide_end"] >= doc.metadata["slide_start"]
+
+
 # ---------------------------------------------------------------------------
 # Parametrized test: lazy_load() for every loader
 # ---------------------------------------------------------------------------
@@ -343,6 +371,7 @@ def test_lazy_load_returns_documents(
     assert all(
         isinstance(d, Document) for d in docs
     ), "lazy_load() must yield Document instances"
+    _assert_conditional_structure_metadata(docs)
 
     # Content assertion -- at least one doc should contain the expected text
     all_text = " ".join(d.page_content for d in docs)
