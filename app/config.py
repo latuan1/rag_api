@@ -9,6 +9,7 @@ from datetime import datetime
 from dotenv import find_dotenv, load_dotenv
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.services.chunking.config import resolve_chunking_config
 from app.services.vector_store.factory import get_vector_store
 
 load_dotenv(find_dotenv())
@@ -78,8 +79,18 @@ ATLAS_SEARCH_INDEX = get_env_variable("ATLAS_SEARCH_INDEX", "vector_index")
 MONGO_VECTOR_COLLECTION = get_env_variable(
     "MONGO_VECTOR_COLLECTION", None
 )  # Deprecated, backwards compatability
-CHUNK_SIZE = int(get_env_variable("CHUNK_SIZE", "1500"))
-CHUNK_OVERLAP = int(get_env_variable("CHUNK_OVERLAP", "100"))
+CHUNKING_CONFIG = resolve_chunking_config(os.environ)
+CHUNKING_PRESET = CHUNKING_CONFIG.preset
+CHUNKING_STRATEGY = CHUNKING_CONFIG.strategy
+CHUNK_SIZE = CHUNKING_CONFIG.chunk_size
+CHUNK_OVERLAP = CHUNKING_CONFIG.chunk_overlap
+MIN_CHUNK_SIZE = CHUNKING_CONFIG.min_chunk_size
+MAX_CHUNK_SIZE = CHUNKING_CONFIG.max_chunk_size
+PRESERVE_STRUCTURE = CHUNKING_CONFIG.preserve_structure
+CONTEXTUAL_PREFIX_ENABLED = CHUNKING_CONFIG.contextual_prefix_enabled
+MAX_CONTEXTUAL_PREFIX_LENGTH = CHUNKING_CONFIG.max_contextual_prefix_length
+MAX_HEADING_PATH_DEPTH = CHUNKING_CONFIG.max_heading_path_depth
+MAX_METADATA_STRING_LENGTH = CHUNKING_CONFIG.max_metadata_string_length
 
 # Batch processing configuration for memory-constrained environments.
 # When EMBEDDING_BATCH_SIZE > 0, documents are processed in batches to reduce

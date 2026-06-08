@@ -21,7 +21,6 @@ from fastapi import (
     status,
 )
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from functools import lru_cache
 import asyncio
 
@@ -36,8 +35,7 @@ from app.config import (
     VECTOR_DB_TYPE,
     VectorDBType,
     RAG_UPLOAD_DIR,
-    CHUNK_SIZE,
-    CHUNK_OVERLAP,
+    CHUNKING_CONFIG,
     EMBEDDING_BATCH_SIZE,
     EMBEDDING_MAX_QUEUE_SIZE,
     RAG_DISTANCE_THRESHOLD,
@@ -85,6 +83,7 @@ from app.models import (
     DocumentResponse,
     QueryMultipleBody,
 )
+from app.services.chunking.factory import get_chunking_service
 from app.services.vector_store.async_pg_vector import AsyncPgVector
 from app.utils.document_loader import (
     get_loader,
@@ -700,29 +699,14 @@ def _prepare_documents_sync(
     Synchronous document preparation - runs in executor to avoid blocking event loop.
     Handles text splitting, cleaning, and metadata preparation.
     """
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
+    clean_content_fn = clean_text if clean_content else None
+    chunking_service = get_chunking_service(CHUNKING_CONFIG)
+    return chunking_service.split_documents(
+        data,
+        file_id=file_id,
+        user_id=user_id,
+        clean_content=clean_content_fn,
     )
-    documents = text_splitter.split_documents(data)
-
-    # If `clean_content` is True, clean the page_content of each document (remove null bytes)
-    if clean_content:
-        for doc in documents:
-            doc.page_content = clean_text(doc.page_content)
-
-    # Preparing documents with page content and metadata for insertion.
-    return [
-        Document(
-            page_content=doc.page_content,
-            metadata={
-                "file_id": file_id,
-                "user_id": user_id,
-                "digest": generate_digest(doc.page_content),
-                **(doc.metadata or {}),
-            },
-        )
-        for doc in documents
-    ]
 
 
 async def store_data_in_vector_db(
