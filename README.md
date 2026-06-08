@@ -95,6 +95,10 @@ The following environment variables are required to run the application:
 - `RAG_DISTANCE_THRESHOLD`: (Optional, `VECTOR_DB_TYPE=pgvector` only) Drop results whose vector distance is greater than this value, after the top-`k` search. Unset by default (no filtering). Lower distance = more similar, so e.g. `0.5` keeps only hits with distance ≤ 0.5 and discards weaker matches. Useful for reducing downstream LLM token cost when the top-`k` call returns loosely-related chunks. Appropriate values depend on the embedding model and distance strategy — inspect your actual scores before choosing one. Ignored (with a startup warning) under `VECTOR_DB_TYPE=atlas-mongo`, because Atlas returns a similarity score (higher = better) with inverted semantics.
 - `RAG_UPLOAD_DIR`: (Optional) The directory where uploaded files are stored. Default value is "./uploads/".
 - `PDF_EXTRACT_IMAGES`: (Optional) A boolean value indicating whether to extract images from PDF files. Default value is "False".
+- `PDF_OCR_ENABLED`: (Optional) Run OCR fallback for PDF pages with little or no extractable text before chunking. Default value is "True".
+- `PDF_OCR_LANGS`: (Optional) Tesseract language list for PDF OCR fallback. Default value is "eng+vie".
+- `PDF_OCR_MIN_TEXT_CHARS`: (Optional) Minimum cleaned text characters required to skip OCR for a PDF page. Default value is "20".
+- `PDF_OCR_DPI`: (Optional) DPI used when rendering PDF pages for OCR. Default value is "200".
 - `DEBUG_RAG_API`: (Optional) Set to "True" to show more verbose logging output in the server console, and to enable postgresql database routes
 - `DEBUG_PGVECTOR_QUERIES`: (Optional) Set to "True" to enable detailed PostgreSQL query logging for pgvector operations. Useful for debugging performance issues with vector database queries.
 - `CONSOLE_JSON`: (Optional) Set to "True" to log as json for Cloud Logging aggregations
@@ -132,6 +136,18 @@ The following environment variables are required to run the application:
 - `RAG_CHECK_EMBEDDING_CTX_LENGTH` (Optional) Default is true, disabling this will send raw input to the embedder, use this for custom embedding models.
 
 Make sure to set these environment variables before running the application. You can set them in a `.env` file or as system environment variables.
+
+### PDF OCR Fallback
+
+Scanned or image-only PDFs are handled by a fallback OCR layer before text chunking. The API first attempts normal PDF text extraction with PyPDF; pages whose cleaned text is shorter than `PDF_OCR_MIN_TEXT_CHARS` are rendered with PyMuPDF and OCRed with Tesseract.
+
+Docker images install `tesseract-ocr`, English traineddata, and Vietnamese traineddata. For local development, install equivalent system packages before using OCR fallback. On Debian/Ubuntu:
+
+```bash
+sudo apt-get install tesseract-ocr tesseract-ocr-eng tesseract-ocr-vie
+```
+
+Use `PDF_OCR_ENABLED=False` to disable fallback OCR, or change `PDF_OCR_LANGS` if your deployment needs a different Tesseract language set.
 
 ### Embedding Batch Processing
 

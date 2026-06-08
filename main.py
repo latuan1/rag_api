@@ -17,6 +17,10 @@ from app.config import (
     CHUNK_SIZE,
     CHUNK_OVERLAP,
     PDF_EXTRACT_IMAGES,
+    PDF_OCR_DPI,
+    PDF_OCR_ENABLED,
+    PDF_OCR_LANGS,
+    PDF_OCR_MIN_TEXT_CHARS,
     VECTOR_DB_TYPE,
     LogMiddleware,
     logger,
@@ -87,6 +91,10 @@ app.middleware("http")(security_middleware)
 app.state.CHUNK_SIZE = CHUNK_SIZE
 app.state.CHUNK_OVERLAP = CHUNK_OVERLAP
 app.state.PDF_EXTRACT_IMAGES = PDF_EXTRACT_IMAGES
+app.state.PDF_OCR_ENABLED = PDF_OCR_ENABLED
+app.state.PDF_OCR_LANGS = PDF_OCR_LANGS
+app.state.PDF_OCR_MIN_TEXT_CHARS = PDF_OCR_MIN_TEXT_CHARS
+app.state.PDF_OCR_DPI = PDF_OCR_DPI
 
 # Include routers
 app.include_router(document_routes.router)

@@ -9,7 +9,16 @@ import chardet
 
 from langchain_core.documents import Document
 
-from app.config import known_source_ext, PDF_EXTRACT_IMAGES, CHUNK_OVERLAP, logger
+from app.config import (
+    known_source_ext,
+    PDF_EXTRACT_IMAGES,
+    PDF_OCR_DPI,
+    PDF_OCR_ENABLED,
+    PDF_OCR_LANGS,
+    PDF_OCR_MIN_TEXT_CHARS,
+    CHUNK_OVERLAP,
+    logger,
+)
 from langchain_community.document_loaders import (
     TextLoader,
     PyPDFLoader,
@@ -243,6 +252,37 @@ def process_documents(documents: List[Document]) -> str:
     return processed_text.strip()
 
 
+def _ocr_pdf_page(filepath: str, page_index: int, langs: str, dpi: int) -> str:
+    """Render one PDF page and OCR it with Tesseract."""
+    try:
+        import pymupdf
+    except ImportError:
+        import fitz as pymupdf
+
+    import pytesseract
+
+    temp_path = None
+    doc = None
+    try:
+        doc = pymupdf.open(filepath)
+        page = doc[page_index]
+        pix = page.get_pixmap(dpi=dpi, alpha=False)
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+            temp_path = temp_file.name
+
+        pix.save(temp_path)
+        return pytesseract.image_to_string(temp_path, lang=langs).strip()
+    finally:
+        if doc is not None:
+            doc.close()
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError as e:
+                logger.warning("Failed to remove temporary OCR image: %s", e)
+
+
 class SafePyPDFLoader:
     """
     A wrapper around PyPDFLoader that handles image extraction failures gracefully.
@@ -256,18 +296,73 @@ class SafePyPDFLoader:
     ref.: https://github.com/langchain-ai/langchain/issues/26652
     """
 
-    def __init__(self, filepath: str, extract_images: bool = False):
+    def __init__(
+        self,
+        filepath: str,
+        extract_images: bool = False,
+        ocr_enabled: bool = PDF_OCR_ENABLED,
+        ocr_langs: str = PDF_OCR_LANGS,
+        ocr_min_text_chars: int = PDF_OCR_MIN_TEXT_CHARS,
+        ocr_dpi: int = PDF_OCR_DPI,
+    ):
         self.filepath = filepath
         self.extract_images = extract_images
+        self.ocr_enabled = ocr_enabled
+        self.ocr_langs = ocr_langs
+        self.ocr_min_text_chars = ocr_min_text_chars
+        self.ocr_dpi = ocr_dpi
         self._temp_filepath = None  # For compatibility with cleanup function
+
+    def _apply_ocr_fallback(self, pages: List[Document]) -> List[Document]:
+        if not self.ocr_enabled:
+            return pages
+
+        processed_pages = []
+        for position, page in enumerate(pages):
+            cleaned_text = clean_text(page.page_content or "").strip()
+            if len(cleaned_text) >= self.ocr_min_text_chars:
+                processed_pages.append(page)
+                continue
+
+            page_index = page.metadata.get("page", position)
+            try:
+                page_index = int(page_index)
+            except (TypeError, ValueError):
+                page_index = position
+
+            try:
+                ocr_text = _ocr_pdf_page(
+                    self.filepath, page_index, self.ocr_langs, self.ocr_dpi
+                )
+            except Exception as e:
+                logger.warning(
+                    "PDF OCR failed for %s page %s; keeping extracted text: %s",
+                    self.filepath,
+                    page_index,
+                    e,
+                )
+                processed_pages.append(page)
+                continue
+
+            if ocr_text:
+                logger.info(
+                    "Applied PDF OCR fallback for %s page %s", self.filepath, page_index
+                )
+                processed_pages.append(
+                    Document(page_content=ocr_text, metadata=page.metadata)
+                )
+            else:
+                processed_pages.append(page)
+
+        return processed_pages
 
     def lazy_load(self) -> Iterator[Document]:
         """Lazy load PDF documents with automatic fallback on image extraction errors."""
         loader = PyPDFLoader(self.filepath, extract_images=self.extract_images)
 
         if not self.extract_images:
-            # No image extraction: no fallback needed, stream directly
-            yield from loader.lazy_load()
+            for page in loader.lazy_load():
+                yield from self._apply_ocr_fallback([page])
             return
 
         # extract_images=True: must collect eagerly so that a mid-stream
@@ -285,6 +380,7 @@ class SafePyPDFLoader:
             else:
                 # Re-raise if it's a different error
                 raise
+        pages = self._apply_ocr_fallback(pages)
         yield from pages
 
     def load(self) -> List[Document]:

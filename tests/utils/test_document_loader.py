@@ -54,6 +54,8 @@ def test_safe_pdf_loader_class():
     loader = SafePyPDFLoader("dummy.pdf", extract_images=True)
     assert loader.filepath == "dummy.pdf"
     assert loader.extract_images == True
+    assert loader.ocr_enabled is True
+    assert loader.ocr_langs == "eng+vie"
     assert loader._temp_filepath is None
 
 
@@ -172,6 +174,111 @@ def test_safe_pdf_loader_non_filter_error_propagates():
 
         with pytest.raises(KeyError, match="SomeOtherKey"):
             list(loader.lazy_load())
+
+
+def test_safe_pdf_loader_skips_ocr_when_page_has_enough_text():
+    """Born-digital PDF text should not be OCRed."""
+    from app.utils.document_loader import SafePyPDFLoader
+
+    pdf_docs = [
+        Document(
+            page_content="This page already has enough extractable text.",
+            metadata={"source": "dummy.pdf", "page": 0},
+        )
+    ]
+
+    def primary_gen():
+        yield from pdf_docs
+
+    loader = SafePyPDFLoader(
+        "dummy.pdf",
+        extract_images=False,
+        ocr_enabled=True,
+        ocr_min_text_chars=20,
+    )
+
+    with patch("app.utils.document_loader.PyPDFLoader") as MockPDF, patch(
+        "app.utils.document_loader._ocr_pdf_page"
+    ) as mock_ocr:
+        primary_instance = MagicMock()
+        primary_instance.lazy_load.side_effect = primary_gen
+        MockPDF.return_value = primary_instance
+
+        result = list(loader.lazy_load())
+
+    assert result[0].page_content == pdf_docs[0].page_content
+    mock_ocr.assert_not_called()
+
+
+def test_safe_pdf_loader_ocr_runs_for_empty_page_before_chunking():
+    """Image-only PDF pages should be replaced with OCR text before callers chunk."""
+    from app.utils.document_loader import SafePyPDFLoader
+
+    pdf_docs = [
+        Document(
+            page_content="",
+            metadata={"source": "dummy.pdf", "page": 0},
+        )
+    ]
+
+    def primary_gen():
+        yield from pdf_docs
+
+    loader = SafePyPDFLoader(
+        "dummy.pdf",
+        extract_images=False,
+        ocr_enabled=True,
+        ocr_min_text_chars=20,
+        ocr_langs="eng+vie",
+        ocr_dpi=200,
+    )
+
+    with patch("app.utils.document_loader.PyPDFLoader") as MockPDF, patch(
+        "app.utils.document_loader._ocr_pdf_page", return_value="Xin chao tu OCR"
+    ) as mock_ocr:
+        primary_instance = MagicMock()
+        primary_instance.lazy_load.side_effect = primary_gen
+        MockPDF.return_value = primary_instance
+
+        result = list(loader.lazy_load())
+
+    assert result[0].page_content == "Xin chao tu OCR"
+    assert result[0].metadata == pdf_docs[0].metadata
+    mock_ocr.assert_called_once_with("dummy.pdf", 0, "eng+vie", 200)
+
+
+def test_safe_pdf_loader_ocr_failure_keeps_original_page(caplog):
+    """OCR errors should not fail ingestion when normal PDF loading succeeded."""
+    from app.utils.document_loader import SafePyPDFLoader
+
+    pdf_docs = [
+        Document(
+            page_content="",
+            metadata={"source": "dummy.pdf", "page": 2},
+        )
+    ]
+
+    def primary_gen():
+        yield from pdf_docs
+
+    loader = SafePyPDFLoader(
+        "dummy.pdf",
+        extract_images=False,
+        ocr_enabled=True,
+        ocr_min_text_chars=20,
+    )
+
+    with patch("app.utils.document_loader.PyPDFLoader") as MockPDF, patch(
+        "app.utils.document_loader._ocr_pdf_page", side_effect=RuntimeError("boom")
+    ):
+        primary_instance = MagicMock()
+        primary_instance.lazy_load.side_effect = primary_gen
+        MockPDF.return_value = primary_instance
+
+        result = list(loader.lazy_load())
+
+    assert result[0].page_content == ""
+    assert "PDF OCR failed" in caplog.text
 
 
 MARKDOWN_SAMPLE = (

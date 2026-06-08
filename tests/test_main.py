@@ -211,6 +211,49 @@ def test_embed_file(tmp_path, auth_headers):
     assert json_data["file_id"] == "testid1"
 
 
+def test_embed_file_stores_ocr_loaded_content_before_chunking(
+    tmp_path, auth_headers, monkeypatch
+):
+    captured_docs = []
+
+    async def fake_load_file_content(*args, **kwargs):
+        return (
+            [
+                Document(
+                    page_content="Xin chao tu OCR",
+                    metadata={"source": "scan.pdf", "page": 0},
+                )
+            ],
+            True,
+            "pdf",
+        )
+
+    async def capture_aadd_documents(self, docs, ids=None, executor=None):
+        captured_docs.extend(docs)
+        return ids
+
+    from app.services.vector_store.async_pg_vector import AsyncPgVector
+
+    monkeypatch.setattr(document_routes, "load_file_content", fake_load_file_content)
+    monkeypatch.setattr(AsyncPgVector, "aadd_documents", capture_aadd_documents)
+
+    test_file = tmp_path / "scan.pdf"
+    test_file.write_bytes(b"%PDF placeholder")
+
+    with test_file.open("rb") as f:
+        response = client.post(
+            "/embed",
+            data={"file_id": "scan-file", "entity_id": "testuser"},
+            files={"file": ("scan.pdf", f, "application/pdf")},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200, f"Response: {response.text}"
+    assert captured_docs
+    assert captured_docs[0].page_content == "Xin chao tu OCR"
+    assert captured_docs[0].metadata["page"] == 0
+
+
 def test_load_document_context(auth_headers):
     response = client.get("/documents/testid1/context", headers=auth_headers)
     assert response.status_code == 200, f"Response: {response.text}"
