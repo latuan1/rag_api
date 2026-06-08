@@ -5,9 +5,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.services.chunking.config import ChunkingConfig
-
-
-PROTECTED_METADATA_KEYS = {"file_id", "user_id", "digest"}
+from app.services.chunking.metadata import merge_chunk_metadata
 
 
 def generate_digest(page_content: str) -> str:
@@ -39,25 +37,22 @@ class RecursiveChunkingService:
                 if clean_content
                 else chunk.page_content
             )
-            loader_metadata = {
-                key: value
-                for key, value in (chunk.metadata or {}).items()
-                if key not in PROTECTED_METADATA_KEYS
+            system_metadata = {
+                "file_id": file_id,
+                "user_id": user_id,
+                "digest": generate_digest(content),
+                "chunk_index": index,
+                "chunk_strategy": self.strategy_name,
+                "chunking_preset": self.config.preset,
+                "chunk_size": len(content),
+                "contextual_prefix_enabled": False,
             }
             prepared.append(
                 Document(
                     page_content=content,
-                    metadata={
-                        **loader_metadata,
-                        "file_id": file_id,
-                        "user_id": user_id,
-                        "digest": generate_digest(content),
-                        "chunk_index": index,
-                        "chunk_strategy": self.strategy_name,
-                        "chunking_preset": self.config.preset,
-                        "chunk_size": len(content),
-                        "contextual_prefix_enabled": False,
-                    },
+                    metadata=merge_chunk_metadata(
+                        chunk.metadata or {}, system_metadata, self.config
+                    ),
                 )
             )
 

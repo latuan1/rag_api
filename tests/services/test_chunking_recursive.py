@@ -4,6 +4,7 @@ from langchain_core.documents import Document
 
 from app.services.chunking.config import ChunkingConfig
 from app.services.chunking.factory import get_chunking_service
+from app.services.chunking.auto import AutoChunkingService
 from app.services.chunking.recursive import RecursiveChunkingService
 
 
@@ -54,13 +55,32 @@ def test_recursive_service_digest_uses_final_chunk_text():
         assert chunk.metadata["digest"] == expected
 
 
+def test_recursive_service_uses_sanitized_loader_metadata():
+    config = _config()
+    service = RecursiveChunkingService(config)
+    chunks = service.split_documents(
+        [
+            Document(
+                page_content="alpha beta gamma",
+                metadata={"file_id": "loader", "filename": "abc.txt", "bad": object()},
+            )
+        ],
+        file_id="system",
+        user_id="user-1",
+    )
+
+    assert chunks[0].metadata["file_id"] == "system"
+    assert chunks[0].metadata["filename"] == "abc.txt"
+    assert "bad" not in chunks[0].metadata
+
+
 def test_factory_returns_recursive_for_recursive_strategy():
     service = get_chunking_service(_config())
 
     assert isinstance(service, RecursiveChunkingService)
 
 
-def test_factory_uses_recursive_compatibility_for_auto_in_pr1():
+def test_factory_returns_auto_for_auto_strategy():
     config = _config()
     config = type(config)(
         **{**config.__dict__, "strategy": "auto", "preset": "balanced"}
@@ -68,5 +88,4 @@ def test_factory_uses_recursive_compatibility_for_auto_in_pr1():
 
     service = get_chunking_service(config)
 
-    assert isinstance(service, RecursiveChunkingService)
-    assert service.strategy_name == "auto"
+    assert isinstance(service, AutoChunkingService)

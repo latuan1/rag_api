@@ -517,13 +517,3 @@ pytest tests/test_upload_isolation.py -v
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
-
-Run:
-
-```powershell
-git add app/services/chunking tests/services/test_chunking_metadata.py tests/services/test_chunking_paragraph.py tests/services/test_chunking_auto.py tests/services/test_chunking_recursive.py tests/test_main.py
-git commit -m "feat: add metadata-aware auto chunking"
-```
-
-Expected: commit succeeds. Do not include Office/table refinements from PR 3 in this commit.

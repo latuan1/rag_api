@@ -505,13 +505,3 @@ pytest tests/utils -v
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
-
-Run:
-
-```powershell
-git add app/config.py app/routes/document_routes.py app/services/chunking tests/services/test_chunking_config.py tests/services/test_chunking_recursive.py tests/test_config.py tests/test_upload_isolation.py tests/test_main.py
-git commit -m "feat: add chunking service and preset config"
-```
-
-Expected: commit succeeds. Do not include PR 2 metadata normalization or structure-aware chunking in this commit.

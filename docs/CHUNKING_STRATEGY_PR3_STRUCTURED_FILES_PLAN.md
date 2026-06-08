@@ -408,13 +408,3 @@ pytest tests/integration -v
 
 Expected: PASS when the configured integration database is running. If skipped or failed because services are unavailable, record the exact reason in the PR notes.
 
-- [ ] **Step 5: Commit**
-
-Run:
-
-```powershell
-git add app/services/chunking tests/services/test_chunking_normalizers.py tests/services/test_chunking_tables.py tests/services/test_chunking_auto.py tests/utils/test_lazy_load.py tests/test_main.py
-git commit -m "feat: refine structured file chunking"
-```
-
-Expected: commit succeeds. Do not include parent-child retrieval, preview endpoints, re-index endpoints, OCR, token-based chunking, reranking, or LibreChat UI changes.
