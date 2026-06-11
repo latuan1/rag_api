@@ -38,3 +38,4 @@ async def test_security_middleware_invalid(invalid_jwt_header):
     request = DummyRequest("/protected", invalid_jwt_header)
     response = await security_middleware(request, dummy_call_next)
     assert response.status_code == 401
+    assert response.body

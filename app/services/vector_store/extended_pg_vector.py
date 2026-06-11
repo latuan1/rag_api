@@ -3,6 +3,7 @@ import time
 import logging
 from typing import Optional, Any, Dict, List, Union
 from sqlalchemy import event
+from sqlalchemy import and_
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 from sqlalchemy.engine import Engine
@@ -172,6 +173,16 @@ class ExtendedPgVector(PGVector):
 
         return super()._handle_field_filter(field, value)
 
+    def _metadata_filter_clause(self, filter: Optional[Dict[str, Any]]) -> Any:
+        if not filter:
+            return None
+        clauses = [
+            self._handle_field_filter(field, value) for field, value in filter.items()
+        ]
+        if not clauses:
+            return None
+        return and_(*clauses)
+
     def get_all_ids(self) -> list[str]:
         with Session(self._bind) as session:
             results = session.query(self.EmbeddingStore.custom_id).all()
@@ -218,4 +229,16 @@ class ExtendedPgVector(PGVector):
                     )
                 stmt = stmt.where(self.EmbeddingStore.custom_id.in_(ids))
                 session.execute(stmt)
+            session.commit()
+
+    def delete_by_metadata_filter(self, filter: Dict[str, Any]) -> None:
+        with Session(self._bind) as session:
+            stmt = delete(self.EmbeddingStore)
+            collection = self.get_collection(session)
+            if collection:
+                stmt = stmt.where(self.EmbeddingStore.collection_id == collection.uuid)
+            clause = self._metadata_filter_clause(filter)
+            if clause is not None:
+                stmt = stmt.where(clause)
+            session.execute(stmt)
             session.commit()

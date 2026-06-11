@@ -1,6 +1,7 @@
 # app/routes/document_routes.py
 import os
 import uuid
+import json
 from pathlib import Path
 import hashlib
 import traceback
@@ -77,6 +78,7 @@ def _apply_distance_threshold(documents):
         return documents
     return [(doc, score) for doc, score in documents if score <= RAG_DISTANCE_THRESHOLD]
 from app.constants import ERROR_MESSAGES
+from app.errors import rag_error
 from app.models import (
     StoreDocument,
     QueryRequestBody,
@@ -261,17 +263,21 @@ async def get_all_ids(request: Request):
 async def health_check():
     try:
         if await is_health_ok():
-            return {"status": "UP"}
+            return {"status": "ok"}
         else:
             logger.error("Health check failed")
-            return {"status": "DOWN"}, 503
+            return rag_error(
+                "service_unavailable",
+                "RAG service or backing vector store is unavailable.",
+                503,
+            )
     except Exception as e:
         logger.error(
             "Error during health check | Error: %s | Traceback: %s",
             str(e),
             traceback.format_exc(),
         )
-        return {"status": "DOWN", "error": str(e)}, 503
+        return rag_error("service_unavailable", str(e), 503)
 
 
 @router.get("/documents", response_model=list[DocumentResponse])
@@ -319,6 +325,12 @@ async def get_documents_by_ids(request: Request, ids: list[str] = Query(...)):
 @router.delete("/documents")
 async def delete_documents(request: Request, document_ids: List[str] = Body(...)):
     try:
+        if not document_ids or any(not document_id for document_id in document_ids):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="documents delete requires a non-empty array of file ids",
+            )
+
         if isinstance(vector_store, AsyncPgVector):
             existing_ids = await vector_store.get_filtered_ids(
                 document_ids, executor=request.app.state.thread_pool
@@ -333,10 +345,7 @@ async def delete_documents(request: Request, document_ids: List[str] = Body(...)
         if not all(id in existing_ids for id in document_ids):
             raise HTTPException(status_code=404, detail="One or more IDs not found")
 
-        file_count = len(document_ids)
-        return {
-            "message": f"Documents for {file_count} file{'s' if file_count > 1 else ''} deleted successfully"
-        }
+        return {"deleted": document_ids}
     except HTTPException as http_exc:
         logger.error(
             "HTTP Exception in delete_documents | Status: %d | Detail: %s",
@@ -841,9 +850,10 @@ async def embed_local_file(
 @router.post("/embed")
 async def embed_file(
     request: Request,
-    file_id: str = Form(...),
+    file_id: str = Form(..., min_length=1),
     file: UploadFile = File(...),
     entity_id: str = Form(None),
+    storage_metadata: str = Form(None),
 ):
     response_status = True
     response_message = "File processed successfully."
@@ -851,6 +861,15 @@ async def embed_file(
 
     user_id = get_user_id(request, entity_id)
     validated_file_path = _make_unique_temp_path(user_id, file.filename)
+
+    if storage_metadata:
+        try:
+            json.loads(storage_metadata)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="storage_metadata must be valid JSON",
+            )
 
     if validated_file_path is None:
         logger.warning("Path validation failed for embed: %s", file.filename)
@@ -889,6 +908,10 @@ async def embed_file(
             response_message = "Failed to process/store the file data."
             if isinstance(result["error"], str):
                 response_message = result["error"]
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=response_message,
+                )
             else:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -918,18 +941,12 @@ async def embed_file(
     finally:
         await cleanup_temp_file_async(validated_file_path)
 
-    return {
-        "status": response_status,
-        "message": response_message,
-        "file_id": file_id,
-        "filename": file.filename,
-        "known_type": known_type,
-    }
+    return {"status": response_status, "known_type": bool(known_type)}
 
 
-@router.get("/documents/{id}/context")
-async def load_document_context(request: Request, id: str):
-    ids = [id]
+@router.get("/documents/{file_id}/context")
+async def load_document_context(request: Request, file_id: str):
+    ids = [file_id]
     try:
         if isinstance(vector_store, AsyncPgVector):
             existing_ids = await vector_store.get_filtered_ids(
@@ -943,7 +960,7 @@ async def load_document_context(request: Request, id: str):
             documents = vector_store.get_documents_by_ids(ids)
 
         # Ensure the requested id exists
-        if not all(id in existing_ids for id in ids):
+        if not all(file_id in existing_ids for file_id in ids):
             raise HTTPException(
                 status_code=404, detail="The specified file_id was not found"
             )
@@ -965,7 +982,7 @@ async def load_document_context(request: Request, id: str):
     except Exception as e:
         logger.error(
             "Error loading document context | Document ID: %s | Error: %s | Traceback: %s",
-            id,
+            file_id,
             str(e),
             traceback.format_exc(),
         )
@@ -1097,7 +1114,7 @@ async def query_embeddings_by_file_ids(request: Request, body: QueryMultipleBody
 @router.post("/text")
 async def extract_text_from_file(
     request: Request,
-    file_id: str = Form(...),
+    file_id: str = Form(..., min_length=1),
     file: UploadFile = File(...),
     entity_id: str = Form(None),
 ):
@@ -1129,12 +1146,7 @@ async def extract_text_from_file(
         # Extract text content from loaded documents
         text_content = extract_text_from_documents(data, file_ext)
 
-        return {
-            "text": text_content,
-            "file_id": file_id,
-            "filename": file.filename,
-            "known_type": known_type,
-        }
+        return {"text": text_content}
 
     except HTTPException as http_exc:
         logger.error(

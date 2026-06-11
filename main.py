@@ -1,13 +1,11 @@
 # main.py
 import os
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
-
-from starlette.responses import JSONResponse
 
 from app.config import (
     VectorDBType,
@@ -24,8 +22,10 @@ from app.config import (
 )
 from app.middleware import security_middleware
 from app.routes import document_routes, pgvector_routes
+from app.routes import knowledge_routes
 from app.services.database import PSQLDatabase, ensure_vector_indexes
 from app.services.vector_store.factory import close_vector_store_connections
+from app.errors import rag_error
 
 
 @asynccontextmanager
@@ -90,16 +90,50 @@ app.state.PDF_EXTRACT_IMAGES = PDF_EXTRACT_IMAGES
 
 # Include routers
 app.include_router(document_routes.router)
+app.include_router(knowledge_routes.router)
 if debug_mode:
     app.include_router(router=pgvector_routes.router)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    code_by_status = {
+        400: "invalid_request",
+        401: "unauthorized",
+        403: "forbidden",
+        404: "not_found",
+        409: "conflict",
+        413: "payload_too_large",
+        415: "unsupported_media_type",
+        422: "processing_failed",
+        429: "rate_limited",
+        500: "internal_error",
+        503: "service_unavailable",
+    }
+    message = exc.detail if isinstance(exc.detail, str) else "Request failed"
+    return rag_error(
+        code_by_status.get(exc.status_code, "internal_error"),
+        message,
+        exc.status_code,
+    )
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     logger.debug("Validation error: %s", exc.errors())
-    return JSONResponse(
-        status_code=422,
-        content={"detail": exc.errors(), "message": "Request validation failed"},
+    errors = exc.errors()
+    first_error = errors[0] if errors else {}
+    loc = list(first_error.get("loc", []))
+    field_parts = [str(part) for part in loc if part not in ("body", "query", "path")]
+    field = ".".join(field_parts) if field_parts else None
+    message = first_error.get("msg", "Request validation failed")
+    if "At least one of page or section is required" in message:
+        field = "metadata.page"
+    return rag_error(
+        "invalid_request",
+        message,
+        400,
+        {"field": field} if field else {"errors": errors},
     )
 
 

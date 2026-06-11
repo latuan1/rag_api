@@ -4,8 +4,8 @@ import jwt
 from jwt import PyJWTError
 from fastapi import Request
 from datetime import datetime, timezone
-from fastapi.responses import JSONResponse
 from app.config import logger
+from app.errors import rag_error
 
 
 async def security_middleware(request: Request, call_next):
@@ -13,6 +13,9 @@ async def security_middleware(request: Request, call_next):
         return await call_next(request)
 
     if request.url.path in {"/docs", "/openapi.json", "/health"}:
+        return await next_middleware_call()
+
+    if request.url.path.startswith("/knowledge/"):
         return await next_middleware_call()
 
     jwt_secret = os.getenv("JWT_SECRET")
@@ -25,9 +28,10 @@ async def security_middleware(request: Request, call_next):
         logger.info(
             f"Unauthorized request with missing or invalid Authorization header to: {request.url.path}"
         )
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Missing or invalid Authorization header"},
+        return rag_error(
+            "unauthorized",
+            "Missing or invalid Authorization header",
+            401,
         )
 
     token = authorization.split(" ")[1]
@@ -40,8 +44,10 @@ async def security_middleware(request: Request, call_next):
             logger.info(
                 f"Unauthorized request with expired token to: {request.url.path}"
             )
-            return JSONResponse(
-                status_code=401, content={"detail": "Token has expired"}
+            return rag_error(
+                "unauthorized",
+                "Token has expired",
+                401,
             )
 
         request.state.user = payload
@@ -50,8 +56,10 @@ async def security_middleware(request: Request, call_next):
         logger.info(
             f"Unauthorized request with invalid token to: {request.url.path}, reason: {str(e)}"
         )
-        return JSONResponse(
-            status_code=401, content={"detail": f"Invalid token: {str(e)}"}
+        return rag_error(
+            "unauthorized",
+            f"Invalid token: {str(e)}",
+            401,
         )
 
     return await next_middleware_call()

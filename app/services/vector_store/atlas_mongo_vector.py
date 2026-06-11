@@ -22,9 +22,11 @@ class AtlasMongoVector(MongoDBAtlasVectorSearch):
         """
         if not documents:
             return []
-        file_id = documents[0].metadata["file_id"]
+        if ids is not None:
+            return super().add_documents(documents, ids)
+        file_id = documents[0].metadata.get("file_id") or documents[0].metadata["fileId"]
         f_ids = [
-            f"{file_id}_{doc.metadata.get('digest') or hashlib.md5(doc.page_content.encode()).hexdigest()}"
+            f"{file_id}_{doc.metadata.get('digest') or doc.metadata.get('chunkHash') or hashlib.md5(doc.page_content.encode()).hexdigest()}"
             for doc in documents
         ]
         return super().add_documents(documents, f_ids)
@@ -82,3 +84,17 @@ class AtlasMongoVector(MongoDBAtlasVectorSearch):
         # Delete documents by file_id
         if ids is not None:
             self._collection.delete_many({"file_id": {"$in": ids}})
+
+    def delete_by_metadata_filter(self, filter: dict) -> None:
+        query = {}
+        for field, condition in (filter or {}).items():
+            if isinstance(condition, dict):
+                if "$eq" in condition:
+                    query[field] = condition["$eq"]
+                elif "$in" in condition:
+                    query[field] = {"$in": condition["$in"]}
+                else:
+                    query[field] = condition
+            else:
+                query[field] = condition
+        self._collection.delete_many(query)

@@ -77,3 +77,22 @@ class TestHandleFieldFilter:
     def test_invalid_operator_raises(self, store):
         with pytest.raises(ValueError, match="Invalid operator"):
             store._handle_field_filter("field", {"$bogus": "val"})
+
+    def test_metadata_filter_clause_scopes_local_knowledge_delete(self, store):
+        clause = store._metadata_filter_clause(
+            {
+                "ownerId": {"$eq": "user_123"},
+                "tenantId": {"$eq": "tenant_a"},
+                "knowledgeSpaceId": {"$eq": "space_123"},
+                "documentId": {"$eq": "doc_123"},
+                "fileId": {"$eq": "file_123"},
+            }
+        )
+        sql = _compile(clause)
+
+        assert "ownerId" in sql
+        assert "tenantId" in sql
+        assert "knowledgeSpaceId" in sql
+        assert "documentId" in sql
+        assert "fileId" in sql
+        assert "->>" in sql

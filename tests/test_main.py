@@ -154,7 +154,7 @@ def test_delete_documents(auth_headers):
     )
     assert response.status_code == 200
     json_data = response.json()
-    assert "Documents for" in json_data["message"]
+    assert json_data == {"deleted": ["testid1"]}
 
 
 def test_query_embeddings_by_file_id(auth_headers):
@@ -207,8 +207,7 @@ def test_embed_file(tmp_path, auth_headers):
         )
     assert response.status_code == 200, f"Response: {response.text}"
     json_data = response.json()
-    assert json_data["status"] is True
-    assert json_data["file_id"] == "testid1"
+    assert json_data == {"status": True, "known_type": True}
 
 
 def test_load_document_context(auth_headers):
@@ -270,13 +269,18 @@ def test_extract_text_from_file(tmp_path, auth_headers):
 
     # Check response structure
     assert "text" in json_data
-    assert "file_id" in json_data
-    assert "filename" in json_data
-    assert "known_type" in json_data
 
     # Check response content
     assert json_data["text"] == file_content
     assert "[Context:" not in json_data["text"]
-    assert json_data["file_id"] == "test_text_123"
-    assert json_data["filename"] == "test_text_extraction.txt"
-    assert json_data["known_type"] is True  # text files are known types
+
+
+def test_health_contract(monkeypatch):
+    async def healthy():
+        return True
+
+    monkeypatch.setattr(document_routes, "is_health_ok", healthy)
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
