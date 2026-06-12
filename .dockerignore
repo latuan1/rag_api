@@ -1,5 +1,14 @@
+.git
+.idea
 .venv
+.env
+.codex_nltk_data/
+.codex_python_deps/
 __pycache__
 uploads/
 myenv/
 venv/
+*.pyc
+dev.yml
+SHOPIFY.md
+.pytest_cache

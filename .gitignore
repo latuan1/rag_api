@@ -11,3 +11,4 @@ venv/
 *.pyc
 dev.yml
 SHOPIFY.md
+.pytest_cache
