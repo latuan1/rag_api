@@ -4,6 +4,7 @@ import json
 import boto3
 import logging
 import urllib.parse
+from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
 from dotenv import find_dotenv, load_dotenv
@@ -117,6 +118,82 @@ else:
 
 CONNECTION_STRING = f"postgresql+psycopg2://{connection_suffix}"
 DSN = f"postgresql://{connection_suffix}"
+
+
+@dataclass(frozen=True)
+class RetrievalSettings:
+    database_url: str
+    embedding_api_key: str
+    embedding_base_url: str | None
+    embedding_provider: str
+    embedding_model: str
+    embedding_dimensions: int
+    embedding_input_version: str
+    dataset_namespace: str
+    embedding_profile: str | None
+    default_match_count: int
+    default_match_threshold: float
+    database_command_timeout: float
+    database_statement_cache_size: int
+    embedding_timeout_seconds: float
+    knowledge_api_token: str | None
+
+
+def load_retrieval_settings(env_getter=get_env_variable) -> RetrievalSettings:
+    return RetrievalSettings(
+        database_url=env_getter("RETRIEVAL_DATABASE_URL", DSN),
+        embedding_api_key=env_getter("RETRIEVAL_EMBEDDING_API_KEY", ""),
+        embedding_base_url=env_getter("RETRIEVAL_EMBEDDING_BASE_URL", "") or None,
+        embedding_provider=env_getter(
+            "RETRIEVAL_EMBEDDING_PROVIDER", "google-gemini"
+        ),
+        embedding_model=env_getter(
+            "RETRIEVAL_EMBEDDING_MODEL", "gemini-embedding-001"
+        ),
+        embedding_dimensions=int(
+            env_getter("RETRIEVAL_EMBEDDING_DIMENSIONS", "1536")
+        ),
+        embedding_input_version=env_getter(
+            "RETRIEVAL_EMBEDDING_INPUT_VERSION", "v1"
+        ),
+        dataset_namespace=env_getter("RETRIEVAL_DATASET_NAMESPACE", "vinuni-policy"),
+        embedding_profile=env_getter("RETRIEVAL_EMBEDDING_PROFILE", "") or None,
+        default_match_count=int(env_getter("RETRIEVAL_DEFAULT_MATCH_COUNT", "10")),
+        default_match_threshold=float(
+            env_getter("RETRIEVAL_DEFAULT_MATCH_THRESHOLD", "0.0")
+        ),
+        database_command_timeout=float(
+            env_getter("RETRIEVAL_DATABASE_COMMAND_TIMEOUT", "30")
+        ),
+        database_statement_cache_size=int(
+            env_getter("RETRIEVAL_DATABASE_STATEMENT_CACHE_SIZE", "100")
+        ),
+        embedding_timeout_seconds=float(
+            env_getter("RETRIEVAL_EMBEDDING_TIMEOUT_SECONDS", "30")
+        ),
+        knowledge_api_token=env_getter("KNOWLEDGE_API_TOKEN", "") or None,
+    )
+
+
+retrieval_settings = load_retrieval_settings()
+RETRIEVAL_DATABASE_URL = retrieval_settings.database_url
+RETRIEVAL_EMBEDDING_API_KEY = retrieval_settings.embedding_api_key
+RETRIEVAL_EMBEDDING_BASE_URL = retrieval_settings.embedding_base_url
+RETRIEVAL_EMBEDDING_PROVIDER = retrieval_settings.embedding_provider
+RETRIEVAL_EMBEDDING_MODEL = retrieval_settings.embedding_model
+RETRIEVAL_EMBEDDING_DIMENSIONS = retrieval_settings.embedding_dimensions
+RETRIEVAL_EMBEDDING_INPUT_VERSION = retrieval_settings.embedding_input_version
+RETRIEVAL_DATASET_NAMESPACE = retrieval_settings.dataset_namespace
+RETRIEVAL_EMBEDDING_PROFILE = retrieval_settings.embedding_profile
+RETRIEVAL_DEFAULT_MATCH_COUNT = retrieval_settings.default_match_count
+RETRIEVAL_DEFAULT_MATCH_THRESHOLD = retrieval_settings.default_match_threshold
+RETRIEVAL_DATABASE_COMMAND_TIMEOUT = retrieval_settings.database_command_timeout
+# Supavisor transaction-mode deployments on port 6543 must set this to 0.
+RETRIEVAL_DATABASE_STATEMENT_CACHE_SIZE = (
+    retrieval_settings.database_statement_cache_size
+)
+RETRIEVAL_EMBEDDING_TIMEOUT_SECONDS = retrieval_settings.embedding_timeout_seconds
+KNOWLEDGE_API_TOKEN = retrieval_settings.knowledge_api_token
 
 ## Logging
 
