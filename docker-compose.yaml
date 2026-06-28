@@ -11,7 +11,10 @@ services:
       - "5433:5432"
 
   fastapi:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
+    image: rag-api-custom-lite:local
     environment:
       - DB_HOST=db
       - DB_PORT=5432

@@ -706,6 +706,23 @@ class TestLangChainUpgradeGuardrails:
             f"jsonb_path_match detected in /query_multiple filter SQL.\n" f"Got: {sql}"
         )
 
+    def test_query_multiple_route_filter_sql_shape_with_user_scope(self, store):
+        """The Personal Knowledge filter must include file and ownership scopes."""
+        route_filter = {
+            "file_id": {"$in": ["file-a", "file-b"]},
+            "user_id": {"$in": ["user-1", "agent-1"]},
+        }
+        clause = store._create_filter_clause(route_filter)
+        sql = _compile_clause(clause)
+
+        assert "file_id" in sql
+        assert "user_id" in sql
+        assert "IN" in sql
+        assert "jsonb_path_match" not in sql, (
+            f"jsonb_path_match detected in Personal Knowledge filter SQL.\n"
+            f"Got: {sql}"
+        )
+
     def test_query_route_filter_uses_index_on_real_pg(self, engine, seeded_data, store):
         """End-to-end: /query filter compiles, runs on PG, uses index."""
         _, target_file_id = seeded_data

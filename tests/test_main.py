@@ -254,6 +254,41 @@ def test_embed_file_stores_ocr_loaded_content_before_chunking(
     assert captured_docs[0].metadata["page"] == 0
 
 
+def test_embed_file_stores_line_metadata_for_text_chunks(
+    tmp_path, auth_headers, monkeypatch
+):
+    captured_docs = []
+
+    async def capture_aadd_documents(self, docs, ids=None, executor=None):
+        captured_docs.extend(docs)
+        return ids
+
+    from app.services.vector_store.async_pg_vector import AsyncPgVector
+
+    monkeypatch.setattr(AsyncPgVector, "aadd_documents", capture_aadd_documents)
+
+    file_content = "Line one\nLine two\nLine three"
+    test_file = tmp_path / "line_metadata.txt"
+    test_file.write_text(file_content, encoding="utf-8")
+
+    with test_file.open("rb") as f:
+        response = client.post(
+            "/embed",
+            data={"file_id": "line-file", "entity_id": "testuser"},
+            files={"file": ("line_metadata.txt", f, "text/plain")},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200, f"Response: {response.text}"
+    assert captured_docs
+    metadata = captured_docs[0].metadata
+    assert metadata["file_id"] == "line-file"
+    assert metadata["user_id"] == "testuser"
+    assert metadata["digest"]
+    assert metadata["start_line"] == 1
+    assert metadata["end_line"] == 3
+
+
 def test_load_document_context(auth_headers):
     response = client.get("/documents/testid1/context", headers=auth_headers)
     assert response.status_code == 200, f"Response: {response.text}"
@@ -292,6 +327,98 @@ def test_query_multiple(auth_headers):
     if json_data:
         doc = json_data[0][0]
         assert doc["page_content"] == "Queried content"
+
+
+def test_query_multiple_filters_by_file_ids_and_authenticated_user(
+    auth_headers, monkeypatch
+):
+    captured = {}
+
+    async def capture_search(self, embedding, k, filter=None, executor=None):
+        captured["embedding"] = embedding
+        captured["k"] = k
+        captured["filter"] = filter
+        return [
+            (
+                Document(
+                    page_content="Queried content",
+                    metadata={"file_id": "testid1", "user_id": "testuser"},
+                ),
+                0.12,
+            )
+        ]
+
+    from app.services.vector_store.async_pg_vector import AsyncPgVector
+
+    monkeypatch.setattr(
+        AsyncPgVector, "asimilarity_search_with_score_by_vector", capture_search
+    )
+
+    response = client.post(
+        "/query_multiple",
+        json={"query": " Test query multiple ", "file_ids": ["testid1", "testid2"]},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200, f"Response: {response.text}"
+    assert captured["k"] == 4
+    assert captured["filter"] == {
+        "file_id": {"$in": ["testid1", "testid2"]},
+        "user_id": {"$in": ["testuser"]},
+    }
+    assert response.json()[0][0]["page_content"] == "Queried content"
+
+
+def test_query_multiple_includes_entity_scope_and_dedupes_file_ids(
+    auth_headers, monkeypatch
+):
+    captured = {}
+
+    async def capture_search(self, embedding, k, filter=None, executor=None):
+        captured["k"] = k
+        captured["filter"] = filter
+        return []
+
+    from app.services.vector_store.async_pg_vector import AsyncPgVector
+
+    monkeypatch.setattr(
+        AsyncPgVector, "asimilarity_search_with_score_by_vector", capture_search
+    )
+
+    response = client.post(
+        "/query_multiple",
+        json={
+            "query": "question",
+            "file_ids": [" file-a ", "file-b", "file-a"],
+            "k": 10,
+            "entity_id": " agent-456 ",
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200, f"Response: {response.text}"
+    assert response.json() == []
+    assert captured["k"] == 10
+    assert captured["filter"] == {
+        "file_id": {"$in": ["file-a", "file-b"]},
+        "user_id": {"$in": ["testuser", "agent-456"]},
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"query": "   ", "file_ids": ["file-a"]},
+        {"query": "question", "file_ids": ["file-a", " "]},
+        {"query": "question", "file_ids": [f"file-{i}" for i in range(51)]},
+        {"query": "question", "file_ids": ["file-a"], "k": 0},
+        {"query": "question", "file_ids": ["file-a"], "k": 51},
+    ],
+)
+def test_query_multiple_rejects_invalid_payloads(auth_headers, payload):
+    response = client.post("/query_multiple", json=payload, headers=auth_headers)
+
+    assert response.status_code == 422
 
 
 def test_extract_text_from_file(tmp_path, auth_headers):

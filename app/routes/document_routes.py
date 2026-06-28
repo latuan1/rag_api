@@ -92,6 +92,10 @@ from app.utils.document_loader import (
     process_documents,
     cleanup_temp_encoding_file,
 )
+from app.utils.document_locations import (
+    annotate_loaded_documents,
+    line_range_for_text_span,
+)
 from app.utils.health import is_health_ok
 
 router = APIRouter()
@@ -110,6 +114,19 @@ def get_user_id(request: Request, entity_id: str = None) -> str:
         return entity_id if entity_id else "public"
     else:
         return entity_id if entity_id else request.state.user.get("id")
+
+
+def get_authorized_user_ids(
+    request: Request, entity_id: Optional[str] = None
+) -> list[str]:
+    if not hasattr(request.state, "user"):
+        return [entity_id or "public"]
+
+    user_id = request.state.user.get("id")
+    authorized = [user_id]
+    if entity_id and entity_id != user_id:
+        authorized.append(entity_id)
+    return authorized
 
 
 async def save_upload_file_async(file: UploadFile, temp_file_path: str) -> None:
@@ -197,6 +214,8 @@ async def load_file_content(
         )
         loop = asyncio.get_running_loop()
         data = await loop.run_in_executor(executor, lambda: list(loader.lazy_load()))
+        if not raw_text:
+            data = annotate_loaded_documents(data, file_path, file_ext)
         return data, known_type, file_ext
     finally:
         # Clean up temporary UTF-8 file if it was created for encoding conversion
@@ -695,15 +714,43 @@ def _prepare_documents_sync(
     file_id: str,
     user_id: str,
     clean_content: bool,
+    chunk_size: Optional[int] = None,
+    chunk_overlap: Optional[int] = None,
 ) -> List[Document]:
     """
     Synchronous document preparation - runs in executor to avoid blocking event loop.
     Handles text splitting, cleaning, and metadata preparation.
     """
+    resolved_chunk_overlap = CHUNK_OVERLAP if chunk_overlap is None else chunk_overlap
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
+        chunk_size=chunk_size or CHUNK_SIZE,
+        chunk_overlap=resolved_chunk_overlap,
     )
-    documents = text_splitter.split_documents(data)
+    documents = []
+    for source_doc in data:
+        source_text = source_doc.page_content
+        source_metadata = dict(source_doc.metadata or {})
+        cursor = 0
+        for chunk in text_splitter.split_text(source_text):
+            chunk_start = source_text.find(chunk, cursor)
+            if chunk_start < 0:
+                chunk_start = source_text.find(chunk)
+            if chunk_start < 0:
+                chunk_start = cursor
+            chunk_end = chunk_start + len(chunk)
+            metadata = dict(source_metadata)
+            if "start_line" in source_metadata and "end_line" in source_metadata:
+                start_line, end_line = line_range_for_text_span(
+                    source_text,
+                    int(source_metadata["start_line"]),
+                    chunk_start,
+                    chunk_end,
+                )
+                metadata["start_line"] = start_line
+                metadata["end_line"] = end_line
+
+            documents.append(Document(page_content=chunk, metadata=metadata))
+            cursor = max(chunk_start + 1, chunk_end - resolved_chunk_overlap)
 
     # If `clean_content` is True, clean the page_content of each document (remove null bytes)
     if clean_content:
@@ -808,6 +855,7 @@ async def embed_local_file(
         data = await loop.run_in_executor(
             request.app.state.thread_pool, lambda: list(loader.lazy_load())
         )
+        data = annotate_loaded_documents(data, file_path, file_ext)
 
         result = await store_data_in_vector_db(
             data,
@@ -1069,27 +1117,32 @@ async def query_embeddings_by_file_ids(request: Request, body: QueryMultipleBody
     try:
         # Get the embedding of the query text
         embedding = get_cached_query_embedding(body.query)
+        authorized_user_ids = get_authorized_user_ids(request, body.entity_id)
 
         # Perform similarity search with the query embedding and filter by the file_ids in metadata
+        retrieval_filter = {
+            "file_id": {"$in": body.file_ids},
+            "user_id": {"$in": authorized_user_ids},
+        }
         if isinstance(vector_store, AsyncPgVector):
             documents = await vector_store.asimilarity_search_with_score_by_vector(
                 embedding,
                 k=body.k,
-                filter={"file_id": {"$in": body.file_ids}},
+                filter=retrieval_filter,
                 executor=request.app.state.thread_pool,
             )
         else:
             documents = vector_store.similarity_search_with_score_by_vector(
-                embedding, k=body.k, filter={"file_id": {"$in": body.file_ids}}
+                embedding,
+                k=body.k,
+                filter=retrieval_filter,
             )
 
         documents = _apply_distance_threshold(documents)
 
         # Ensure documents list is not empty
         if not documents:
-            raise HTTPException(
-                status_code=404, detail="No documents found for the given query"
-            )
+            return []
 
         return documents
     except HTTPException as http_exc:
