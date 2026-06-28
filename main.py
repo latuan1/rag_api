@@ -27,7 +27,7 @@ from app.config import (
     vector_store,
 )
 from app.middleware import security_middleware
-from app.routes import document_routes, pgvector_routes
+from app.routes import document_routes, local_knowledge_routes, pgvector_routes
 from app.services.database import PSQLDatabase, ensure_vector_indexes
 from app.services.vector_store.factory import close_vector_store_connections
 
@@ -60,6 +60,11 @@ async def lifespan(app: FastAPI):
             logger.info("asyncpg connection pool closed")
         except Exception as e:
             logger.warning("Failed to close asyncpg pool: %s", e)
+
+    try:
+        await local_knowledge_routes.close_knowledge_service()
+    except Exception as e:
+        logger.warning("Failed to close local knowledge service: %s", e)
 
     # Drain in-flight work before closing backing resources
     logger.info("Shutting down thread pool")
@@ -98,6 +103,7 @@ app.state.PDF_OCR_DPI = PDF_OCR_DPI
 
 # Include routers
 app.include_router(document_routes.router)
+app.include_router(local_knowledge_routes.router)
 if debug_mode:
     app.include_router(router=pgvector_routes.router)
 

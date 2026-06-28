@@ -8,6 +8,10 @@ from fastapi.responses import JSONResponse
 from app.config import logger
 
 
+def is_jwt_auth_configured() -> bool:
+    return bool(os.getenv("JWT_SECRET"))
+
+
 async def security_middleware(request: Request, call_next):
     async def next_middleware_call():
         return await call_next(request)
@@ -16,11 +20,29 @@ async def security_middleware(request: Request, call_next):
         return await next_middleware_call()
 
     jwt_secret = os.getenv("JWT_SECRET")
-    if not jwt_secret:
+    if not is_jwt_auth_configured():
         logger.warn("JWT_SECRET not found in environment variables")
         return await next_middleware_call()
 
     authorization = request.headers.get("Authorization")
+    if request.url.path.startswith("/knowledge"):
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization.split(" ")[1]
+            try:
+                payload = jwt.decode(token, jwt_secret, algorithms=["HS256"])
+                exp_timestamp = payload.get("exp")
+                if (
+                    exp_timestamp
+                    and datetime.now(tz=timezone.utc)
+                    <= datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
+                ):
+                    request.state.user = payload
+            except PyJWTError as e:
+                logger.info(
+                    f"Knowledge request with invalid token to: {request.url.path}, reason: {str(e)}"
+                )
+        return await next_middleware_call()
+
     if not authorization or not authorization.startswith("Bearer "):
         logger.info(
             f"Unauthorized request with missing or invalid Authorization header to: {request.url.path}"
