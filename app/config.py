@@ -42,6 +42,9 @@ def get_env_variable(
     return value
 
 
+TESTING = get_env_variable("TESTING", "0").lower() in ("true", "1", "yes", "on")
+
+
 RAG_HOST = os.getenv("RAG_HOST", "0.0.0.0")
 RAG_PORT = int(os.getenv("RAG_PORT", 8000))
 
@@ -404,6 +407,14 @@ def init_embeddings(provider, model, dimensions=None):
         raise ValueError(f"Unsupported embeddings provider: {provider}")
 
 
+class _TestingEmbeddings:
+    def embed_query(self, query):
+        return [0.1, 0.2, 0.3]
+
+    def embed_documents(self, texts):
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+
 EMBEDDINGS_PROVIDER = EmbeddingsProvider(
     get_env_variable("EMBEDDINGS_PROVIDER", EmbeddingsProvider.OPENAI.value).lower()
 )
@@ -450,41 +461,50 @@ elif EMBEDDINGS_PROVIDER == EmbeddingsProvider.BEDROCK:
 else:
     raise ValueError(f"Unsupported embeddings provider: {EMBEDDINGS_PROVIDER}")
 
-embeddings = init_embeddings(
-    EMBEDDINGS_PROVIDER, EMBEDDINGS_MODEL, dimensions=EMBEDDINGS_DIMENSIONS
-)
+if TESTING:
+    embeddings = _TestingEmbeddings()
+    from app.services.vector_store.async_pg_vector import AsyncPgVector
 
-logger.info(f"Initialized embeddings of type: {type(embeddings)}")
-
-# Vector store
-if VECTOR_DB_TYPE == VectorDBType.PGVECTOR:
-    vector_store = get_vector_store(
-        connection_string=CONNECTION_STRING,
-        embeddings=embeddings,
-        collection_name=COLLECTION_NAME,
-        mode="async",
-        create_extension=PGVECTOR_CREATE_EXTENSION,
-        pool_pre_ping=PG_POOL_PRE_PING,
-        pool_recycle=PG_POOL_RECYCLE,
-        schema=POSTGRES_SCHEMA,
-    )
-elif VECTOR_DB_TYPE == VectorDBType.ATLAS_MONGO:
-    # Backward compatability check
-    if MONGO_VECTOR_COLLECTION:
-        logger.info(
-            f"DEPRECATED: Please remove env var MONGO_VECTOR_COLLECTION and instead use COLLECTION_NAME and ATLAS_SEARCH_INDEX. You can set both as same, but not neccessary. See README for more information."
-        )
-        ATLAS_SEARCH_INDEX = MONGO_VECTOR_COLLECTION
-        COLLECTION_NAME = MONGO_VECTOR_COLLECTION
-    vector_store = get_vector_store(
-        connection_string=ATLAS_MONGO_DB_URI,
-        embeddings=embeddings,
-        collection_name=COLLECTION_NAME,
-        mode="atlas-mongo",
-        search_index=ATLAS_SEARCH_INDEX,
-    )
+    vector_store = AsyncPgVector.__new__(AsyncPgVector)
+    vector_store.embedding_function = embeddings
+    vector_store._bind = None
+    vector_store.as_retriever = lambda: vector_store
 else:
-    raise ValueError(f"Unsupported vector store type: {VECTOR_DB_TYPE}")
+    embeddings = init_embeddings(
+        EMBEDDINGS_PROVIDER, EMBEDDINGS_MODEL, dimensions=EMBEDDINGS_DIMENSIONS
+    )
+
+    logger.info(f"Initialized embeddings of type: {type(embeddings)}")
+
+    # Vector store
+    if VECTOR_DB_TYPE == VectorDBType.PGVECTOR:
+        vector_store = get_vector_store(
+            connection_string=CONNECTION_STRING,
+            embeddings=embeddings,
+            collection_name=COLLECTION_NAME,
+            mode="async",
+            create_extension=PGVECTOR_CREATE_EXTENSION,
+            pool_pre_ping=PG_POOL_PRE_PING,
+            pool_recycle=PG_POOL_RECYCLE,
+            schema=POSTGRES_SCHEMA,
+        )
+    elif VECTOR_DB_TYPE == VectorDBType.ATLAS_MONGO:
+        # Backward compatability check
+        if MONGO_VECTOR_COLLECTION:
+            logger.info(
+                f"DEPRECATED: Please remove env var MONGO_VECTOR_COLLECTION and instead use COLLECTION_NAME and ATLAS_SEARCH_INDEX. You can set both as same, but not neccessary. See README for more information."
+            )
+            ATLAS_SEARCH_INDEX = MONGO_VECTOR_COLLECTION
+            COLLECTION_NAME = MONGO_VECTOR_COLLECTION
+        vector_store = get_vector_store(
+            connection_string=ATLAS_MONGO_DB_URI,
+            embeddings=embeddings,
+            collection_name=COLLECTION_NAME,
+            mode="atlas-mongo",
+            search_index=ATLAS_SEARCH_INDEX,
+        )
+    else:
+        raise ValueError(f"Unsupported vector store type: {VECTOR_DB_TYPE}")
 
 retriever = vector_store.as_retriever()
 
