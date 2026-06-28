@@ -137,6 +137,64 @@ The following environment variables are required to run the application:
 
 Make sure to set these environment variables before running the application. You can set them in a `.env` file or as system environment variables.
 
+### Local Knowledge Retrieval
+
+The `/knowledge/*` endpoints are a trusted-backend-only retrieval layer for a production Supabase PostgreSQL knowledge database with pgvector. They are separate from the uploaded-file RAG endpoints and follow the contract in [`docs/LOCAL_KNOWLEDGE_RETRIEVAL_CONTRACT.md`](docs/LOCAL_KNOWLEDGE_RETRIEVAL_CONTRACT.md).
+
+These endpoints must not be public. Authentication is required even when the rest of the API is running without `JWT_SECRET` for local development:
+
+- Set `KNOWLEDGE_API_TOKEN` for backend-to-backend calls, then send `X-Knowledge-API-Key: <token>`.
+- If `JWT_SECRET` is configured, a request that has already passed the JWT middleware with `Authorization: Bearer <jwt>` can also authenticate.
+- If both auth paths are configured, either one is accepted.
+- If neither backend auth path is configured, `/knowledge/*` returns `503`. If auth is configured but credentials are missing or invalid, it returns `401`.
+
+Retrieval configuration:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KNOWLEDGE_API_TOKEN` | unset | Shared backend token for `X-Knowledge-API-Key` authentication. Keep it server-side only. |
+| `RETRIEVAL_DATABASE_URL` | existing `DSN` | PostgreSQL DSN for the Supabase knowledge database. Copy it from the Supabase Dashboard database connection settings. |
+| `RETRIEVAL_DATASET_NAMESPACE` | `vinuni-policy` | Knowledge dataset namespace to query. |
+| `RETRIEVAL_EMBEDDING_API_KEY` | unset | API key for the OpenAI-compatible embeddings endpoint used at query time. |
+| `RETRIEVAL_EMBEDDING_BASE_URL` | unset | OpenAI-compatible embeddings base URL. Required for non-OpenAI provider slugs such as the default `google-gemini` profile. |
+| `RETRIEVAL_EMBEDDING_PROVIDER` | `google-gemini` | Stored provider slug expected in `public.knowledge_chunks`. This does not select a generic provider client. |
+| `RETRIEVAL_EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model expected in the active database profile and sent to the OpenAI-compatible embeddings API. |
+| `RETRIEVAL_EMBEDDING_DIMENSIONS` | `1536` | Query embedding size. The current contract requires 1536 dimensions. |
+| `RETRIEVAL_EMBEDDING_INPUT_VERSION` | `v1` | Query input contract version. In `v1`, the raw user query is sent as `input=[query]`. |
+| `RETRIEVAL_EMBEDDING_PROFILE` | unset | Optional exact profile string, for example `google-gemini:gemini-embedding-001:1536:v1`. Omit only when the namespace has exactly one active profile. |
+| `RETRIEVAL_DEFAULT_MATCH_COUNT` | `10` | Default result count for `/knowledge/retrieve` when the request omits `match_count`. |
+| `RETRIEVAL_DEFAULT_MATCH_THRESHOLD` | `0.0` | Default similarity threshold when the request omits `match_threshold`. |
+| `RETRIEVAL_DATABASE_COMMAND_TIMEOUT` | `30` | asyncpg command timeout in seconds. |
+| `RETRIEVAL_DATABASE_STATEMENT_CACHE_SIZE` | `100` | asyncpg prepared statement cache size. Set to `0` for Supavisor transaction mode on port `6543`. |
+| `RETRIEVAL_EMBEDDING_TIMEOUT_SECONDS` | `30` | Timeout in seconds for query embedding API calls. |
+
+`RETRIEVAL_DATABASE_URL` must be a PostgreSQL connection string, for example a direct database connection or Supavisor session-mode DSN from the Supabase Dashboard. Direct connections and Supavisor session mode use port `5432` and are the default choices for the long-running FastAPI service. Supavisor transaction mode on port `6543` is optional; when using it, set `RETRIEVAL_DATABASE_STATEMENT_CACHE_SIZE=0` because transaction pooling is incompatible with asyncpg's prepared statement cache.
+
+Do not use `SUPABASE_URL`, `SUPABASE_ANON_KEY`, or `SUPABASE_SERVICE_ROLE_KEY` as `RETRIEVAL_DATABASE_URL`. Those are Supabase REST/API credentials, not PostgreSQL DSNs. PostgreSQL credentials and Supabase service keys must remain backend-only.
+
+Production schema objects for this layer are managed through versioned SQL migrations such as `supabase/migrations/*.sql`. FastAPI startup does not create, drop, or alter `public.knowledge_chunks`, `public.match_knowledge_chunks(...)`, or the `vector` extension. Verify the Supabase contract before deployment.
+
+The current retrieval transport is OpenAI-compatible embeddings only. For `RETRIEVAL_EMBEDDING_INPUT_VERSION=v1`, the service sends the raw user query as a single embedding input and never exposes raw embeddings in route responses.
+
+Authenticated examples:
+
+```bash
+curl http://localhost:8000/knowledge/profiles \
+  -H "X-Knowledge-API-Key: $KNOWLEDGE_API_TOKEN"
+```
+
+```bash
+curl http://localhost:8000/knowledge/retrieve \
+  -H "Content-Type: application/json" \
+  -H "X-Knowledge-API-Key: $KNOWLEDGE_API_TOKEN" \
+  -d '{
+    "query": "What is the grade appeal procedure?",
+    "match_count": null,
+    "match_threshold": null,
+    "filter_document_type": null
+  }'
+```
+
 ### PDF OCR Fallback
 
 Scanned or image-only PDFs are handled by a fallback OCR layer before text chunking. The API first attempts normal PDF text extraction with PyPDF; pages whose cleaned text is shorter than `PDF_OCR_MIN_TEXT_CHARS` are rendered with PyMuPDF and OCRed with Tesseract.
