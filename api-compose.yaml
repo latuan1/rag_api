@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   rag_api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.lite
     ports:
       - "8000:8000"
     volumes:

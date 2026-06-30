@@ -18,7 +18,10 @@ The API will evolve over time to employ different querying/re-ranking methods, e
 
 ### Getting Started
 
-- **Configure `.env` file based on [section below](#environment-variables)**
+- **Create and configure `.env` file based on [section below](#environment-variables)**
+```bash
+cp .env.example .env
+```
 - **Setup pgvector database:**
   - Run an existing PSQL/PGVector setup, or,
   - Docker: `docker compose up` (also starts RAG API)
@@ -60,6 +63,8 @@ For Docker, rebuild without cache:
 ```bash
 docker compose build --no-cache
 ```
+
+Docker Compose and `utils/docker/docker-build.sh` use `Dockerfile.lite` by default. CI still builds both the full `Dockerfile` image and the lite image.
 
 ### Environment Variables
 

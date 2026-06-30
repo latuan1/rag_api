@@ -18,4 +18,4 @@ LOCAL_DOCKER_IMG=librechat-rag-api:${TAG}
 
 set -e
 
-docker build -t ${LOCAL_DOCKER_IMG} .
+docker build -f Dockerfile.lite -t ${LOCAL_DOCKER_IMG} .
